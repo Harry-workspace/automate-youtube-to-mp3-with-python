@@ -1,3 +1,4 @@
+
 from flask import Flask, request, jsonify, send_file, render_template_string
 from flask_cors import CORS
 import yt_dlp
@@ -17,6 +18,9 @@ CORS(app)
 UPLOAD_FOLDER = 'downloads'
 ALLOWED_EXTENSIONS = {'mp3'}
 MAX_FILE_AGE_HOURS = 24  # Files will be deleted after 24 hours
+
+# Development mode - set to True for local testing
+DEVELOPMENT_MODE = True
 
 # RapidAPI Configuration
 RAPIDAPI_KEY = os.environ.get('RAPIDAPI_KEY', 'your-rapidapi-key')
@@ -53,8 +57,8 @@ def validate_rapidapi_request(f):
         rapidapi_key = request.headers.get('X-RapidAPI-Key')
         rapidapi_host = request.headers.get('X-RapidAPI-Host')
         
-        # For development, allow requests without RapidAPI headers
-        if os.environ.get('FLASK_ENV') == 'development':
+        # For development mode, allow requests without RapidAPI headers
+        if DEVELOPMENT_MODE or os.environ.get('FLASK_ENV') == 'development':
             return f(*args, **kwargs)
         
         # For production, validate RapidAPI headers
@@ -91,13 +95,16 @@ def download_and_convert(video_url, task_id):
         
         download_status[task_id] = {'status': 'converting', 'progress': 50}
         
-        # Download and convert options
+        # Download and convert options - use a temporary filename to avoid double extensions
+        temp_filename = f"{safe_title}_{task_id}"
+        temp_filepath = os.path.join(UPLOAD_FOLDER, temp_filename)
+        
         options = {
             'quiet': True,
             'noplaylist': True,
             'format': 'bestaudio/best',
             'keepvideo': False,
-            'outtmpl': filepath,
+            'outtmpl': temp_filepath,
             'postprocessors': [{
                 'key': 'FFmpegExtractAudio',
                 'preferredcodec': 'mp3',
@@ -109,7 +116,38 @@ def download_and_convert(video_url, task_id):
         with yt_dlp.YoutubeDL(options) as ydl:
             ydl.download([video_info['webpage_url']])
         
-        # Check if file was created successfully
+        # Check if file was created successfully and rename to correct filename
+        actual_filepath = None
+        
+        # Look for the converted file (it might have .mp3 extension added by yt-dlp)
+        possible_paths = [
+            temp_filepath + '.mp3',  # yt-dlp adds .mp3 extension
+            temp_filepath,           # original path
+            filepath                 # target path
+        ]
+        
+        for path in possible_paths:
+            if os.path.exists(path):
+                actual_filepath = path
+                break
+        
+        # If no file found, check for any file with the task_id in the name
+        if not actual_filepath:
+            for filename_in_dir in os.listdir(UPLOAD_FOLDER):
+                if task_id in filename_in_dir and filename_in_dir.endswith('.mp3'):
+                    actual_filepath = os.path.join(UPLOAD_FOLDER, filename_in_dir)
+                    break
+        
+        if actual_filepath and actual_filepath != filepath:
+            # Rename to the correct filename
+            try:
+                os.rename(actual_filepath, filepath)
+            except Exception as e:
+                # If rename fails, copy the file
+                import shutil
+                shutil.copy2(actual_filepath, filepath)
+                os.remove(actual_filepath)
+        
         if os.path.exists(filepath):
             # Get file size
             file_size = os.path.getsize(filepath)
@@ -129,7 +167,12 @@ def download_and_convert(video_url, task_id):
                 'view_count': video_info.get('view_count', 0)
             }
         else:
-            download_status[task_id] = {'status': 'error', 'message': 'File conversion failed'}
+            # List files in directory for debugging
+            files_in_dir = os.listdir(UPLOAD_FOLDER)
+            download_status[task_id] = {
+                'status': 'error', 
+                'message': f'File conversion failed - file not found. Files in directory: {files_in_dir}'
+            }
             
     except Exception as e:
         download_status[task_id] = {'status': 'error', 'message': str(e)}
@@ -182,7 +225,7 @@ def convert_video():
             'status': 'started',
             'message': 'Conversion started successfully',
             'api_info': {
-                'provider': 'RapidAPI',
+                'provider': 'RapidAPI' if not DEVELOPMENT_MODE else 'Development',
                 'endpoint': '/api/convert',
                 'usage': 'Use the task_id to check status at /api/status/{task_id}'
             }
@@ -245,7 +288,8 @@ def health_check():
         'timestamp': datetime.now().isoformat(),
         'service': 'YouTube to MP3 Converter API',
         'version': '1.0.0',
-        'rapidapi_compatible': True
+        'rapidapi_compatible': True,
+        'development_mode': DEVELOPMENT_MODE
     })
 
 @app.route('/api/info', methods=['GET'])
@@ -257,7 +301,8 @@ def api_info():
             'name': 'YouTube to MP3 Converter API',
             'version': '1.0.0',
             'provider': 'RapidAPI',
-            'description': 'Convert YouTube videos to MP3 format with high quality audio extraction'
+            'description': 'Convert YouTube videos to MP3 format with high quality audio extraction',
+            'development_mode': DEVELOPMENT_MODE
         },
         'endpoints': {
             'POST /api/convert': {
@@ -282,8 +327,8 @@ def api_info():
                     }
                 },
                 'headers': {
-                    'X-RapidAPI-Key': 'Your RapidAPI key',
-                    'X-RapidAPI-Host': 'youtube-to-mp3-converter.p.rapidapi.com',
+                    'X-RapidAPI-Key': 'Your RapidAPI key (not required in development mode)',
+                    'X-RapidAPI-Host': 'youtube-to-mp3-converter.p.rapidapi.com (not required in development mode)',
                     'Content-Type': 'application/json'
                 }
             },
@@ -310,8 +355,8 @@ def api_info():
         },
         'usage_examples': {
             'convert_video': {
-                'curl': 'curl -X POST "https://your-api-url.com/api/convert" \\\n  -H "X-RapidAPI-Key: YOUR_API_KEY" \\\n  -H "X-RapidAPI-Host: youtube-to-mp3-converter.p.rapidapi.com" \\\n  -H "Content-Type: application/json" \\\n  -d \'{"url": "https://www.youtube.com/watch?v=VIDEO_ID"}\'',
-                'javascript': 'const response = await fetch("https://your-api-url.com/api/convert", {\n  method: "POST",\n  headers: {\n    "X-RapidAPI-Key": "YOUR_API_KEY",\n    "X-RapidAPI-Host": "youtube-to-mp3-converter.p.rapidapi.com",\n    "Content-Type": "application/json"\n  },\n  body: JSON.stringify({\n    url: "https://www.youtube.com/watch?v=VIDEO_ID"\n  })\n});'
+                'curl': 'curl -X POST "https://your-api-url.com/api/convert" \\\n  -H "Content-Type: application/json" \\\n  -d \'{"url": "https://www.youtube.com/watch?v=VIDEO_ID"}\'',
+                'javascript': 'const response = await fetch("https://your-api-url.com/api/convert", {\n  method: "POST",\n  headers: {\n    "Content-Type": "application/json"\n  },\n  body: JSON.stringify({\n    url: "https://www.youtube.com/watch?v=VIDEO_ID"\n  })\n});'
             }
         }
     })
@@ -333,6 +378,7 @@ def index():
         'name': 'YouTube to MP3 Converter API',
         'version': '1.0.0',
         'rapidapi_compatible': True,
+        'development_mode': DEVELOPMENT_MODE,
         'endpoints': {
             'POST /api/convert': 'Convert YouTube video to MP3',
             'GET /api/status/<task_id>': 'Get conversion status',
@@ -342,8 +388,8 @@ def index():
             'GET /web': 'Web interface'
         },
         'rapidapi_headers': {
-            'X-RapidAPI-Key': 'Your RapidAPI key',
-            'X-RapidAPI-Host': 'youtube-to-mp3-converter.p.rapidapi.com'
+            'X-RapidAPI-Key': 'Your RapidAPI key (not required in development mode)',
+            'X-RapidAPI-Host': 'youtube-to-mp3-converter.p.rapidapi.com (not required in development mode)'
         }
     })
 
