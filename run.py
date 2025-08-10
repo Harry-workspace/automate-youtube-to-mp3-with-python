@@ -1,6 +1,6 @@
 # %%
 import subprocess
-import youtube_dl
+import yt_dlp
 import os
 
 # %%
@@ -9,22 +9,27 @@ import os
 def run():
     # Ask the user for the video they want to download
     video_url = input("Please enter the YouTube Video URL: ")
+    
     # Download and convert to mp3 and store in downloads folder
-    video_info = youtube_dl.YoutubeDL().extract_info(
-        url=video_url, download=False)
+    with yt_dlp.YoutubeDL() as ydl:
+        video_info = ydl.extract_info(url=video_url, download=False)
 
     video_title = video_info['title']
     filename = f"{video_title}.mp3"
 
     # Ask the user for the path they want to save the file after it has been downloaded
     path_to_save = input(
-        r"Enter where the file is to be saved or leave empty if you want it to be saved in the current working directory: "
+        r"Enter where the file is to be saved or leave empty if you want it to be saved in D:\Downloads: "
     )
 
-    where_to_save = os.getcwd()
+    # Default to D:\Downloads instead of current working directory
+    where_to_save = "D:\\Downloads"
 
     if path_to_save != "":
         where_to_save = f"{path_to_save}"
+
+    # Create the directory if it doesn't exist
+    os.makedirs(where_to_save, exist_ok=True)
 
     filename = f"{video_info['title']}.mp3"
     output_path = os.path.join(where_to_save, filename)
@@ -43,7 +48,7 @@ def run():
         }]
     }
 
-    with youtube_dl.YoutubeDL(options) as ydl:
+    with yt_dlp.YoutubeDL(options) as ydl:
         ydl.download([video_info['webpage_url']])
 
     # returns os system eg. 'nt' for windows
