@@ -1,0 +1,11 @@
+[build]
+builder = "nixpacks"
+
+[deploy]
+startCommand = "python app.py"
+
+[build.environment]
+FFMPEG_VERSION = "7.1.1"
+
+[[services]]
+name = "web"
